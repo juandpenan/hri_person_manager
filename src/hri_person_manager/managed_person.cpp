@@ -1,14 +1,13 @@
-#include "managed_person.h"
+#include "hri_person_manager/managed_person.hpp"
 #include <chrono>
 
 using namespace std;
-using namespace ros;
 using namespace hri;
 
-ManagedPerson::ManagedPerson(NodeHandle& nh, ID id, tf2_ros::Buffer& tf_buffer,
+ManagedPerson::ManagedPerson(hri::ID id, tf2::BufferCore& tf_buffer,
                              const string& reference_frame)
-  : _nh(&nh)
-  , _id(id)
+  : Node("managed_person")
+  ,_id(id)
   , _actively_tracked(false)
   , _tf_reference_frame(reference_frame)
   , _tf_buffer(&tf_buffer)
@@ -18,12 +17,12 @@ ManagedPerson::ManagedPerson(NodeHandle& nh, ID id, tf2_ros::Buffer& tf_buffer,
   , _anonymous(false)
   , _time_since_last_seen(0)
 {
-  face_id_pub = _nh->advertise<std_msgs::String>(NS + id + "/face_id", 1, true);
-  body_id_pub = _nh->advertise<std_msgs::String>(NS + id + "/body_id", 1, true);
-  voice_id_pub = _nh->advertise<std_msgs::String>(NS + id + "/voice_id", 1, true);
-  alias_pub = _nh->advertise<std_msgs::String>(NS + id + "/alias", 1, true);
-  anonymous_pub = _nh->advertise<std_msgs::Bool>(NS + id + "/anonymous", 1, true);
-  loc_confidence_pub = _nh->advertise<std_msgs::Float32>(NS + id + "/location_confidence", 1);
+  face_id_pub = this->create_publisher<std_msgs::msg::String>(NS + id + "/body_id",1);
+  body_id_pub = this->create_publisher<std_msgs::msg::String>(NS + id + "/voice_id",1);
+  voice_id_pub = this->create_publisher<std_msgs::msg::String>(NS + id + "/face_id", 1);
+  alias_pub = this->create_publisher<std_msgs::msg::String>(NS + id + "/alias", 1);
+  anonymous_pub = this->create_publisher<std_msgs::msg::Bool>(NS + id + "/anonymous", 1);
+  loc_confidence_pub = this->create_publisher<std_msgs::msg::Float32>(NS + id + "/location_confidence", 1);
 
 
   setAnonymous((id.substr(0, ANONYMOUS.size()) == ANONYMOUS) ? true : false);
@@ -33,77 +32,78 @@ ManagedPerson::ManagedPerson(NodeHandle& nh, ID id, tf2_ros::Buffer& tf_buffer,
 
 ManagedPerson::~ManagedPerson()
 {
-  ROS_DEBUG_STREAM("Closing all topics related to person <" << _id);
-  face_id_pub.shutdown();
-  body_id_pub.shutdown();
-  voice_id_pub.shutdown();
-  alias_pub.shutdown();
-  anonymous_pub.shutdown();
-  loc_confidence_pub.shutdown();
+  RCLCPP_DEBUG_STREAM(this->get_logger(), "Closing all topics related to person <" << _id);
+  // TODO IMPLEMENT SHUTDOWN WHEN AVAILABLE
+  // face_id_pub.shutdown();
+  // body_id_pub.shutdown();
+  // voice_id_pub.shutdown();
+  // alias_pub.shutdown();
+  // anonymous_pub.shutdown();
+  // loc_confidence_pub.shutdown();
 }
 
 void ManagedPerson::setFaceId(ID id)
 {
   if (id != _face_id)
   {
-    ROS_INFO_STREAM("[person <" << _id << ">] face_id updated to <" << id << ">");
+    RCLCPP_INFO_STREAM(this->get_logger(), "[person <" << _id << ">] face_id updated to <" << id << ">");
   }
-
   _face_id = id;
   id_msg.data = id;
-  face_id_pub.publish(id_msg);
+  face_id_pub->publish(id_msg);
 }
 
 void ManagedPerson::setBodyId(ID id)
 {
   if (id != _body_id)
   {
-    ROS_INFO_STREAM("[person <" << _id << ">] body_id updated to <" << id << ">");
+    RCLCPP_INFO_STREAM(this->get_logger(), "[person <" << _id << ">] body_id updated to <" << id << ">");
   }
 
   _body_id = id;
   id_msg.data = id;
-  body_id_pub.publish(id_msg);
+  body_id_pub->publish(id_msg);
 }
 
 void ManagedPerson::setVoiceId(ID id)
 {
   if (id != _voice_id)
   {
-    ROS_INFO_STREAM("[person <" << _id << ">] voice_id updated to <" << id << ">");
+    RCLCPP_INFO_STREAM(this->get_logger(), "[person <" << _id << ">] voice_id updated to <" << id << ">");
   }
   _voice_id = id;
   id_msg.data = id;
-  voice_id_pub.publish(id_msg);
+  voice_id_pub->publish(id_msg);
 }
 
 void ManagedPerson::setAnonymous(bool anonymous)
 {
   if (anonymous && _anonymous != anonymous)
   {
-    ROS_WARN_STREAM("new anonymous person " << _id);
+    RCLCPP_WARN_STREAM(this->get_logger(), "new anonymous person " << _id);
+ 
   }
   _anonymous = anonymous;
   bool_msg.data = anonymous;
-  anonymous_pub.publish(bool_msg);
+  anonymous_pub->publish(bool_msg);
 }
 
 void ManagedPerson::setAlias(ID id)
 {
   if (id != _alias)
-  {
-    ROS_INFO_STREAM("[person <" << _id << ">] set to be alias of <" << _alias << ">");
+  { 
+    RCLCPP_INFO_STREAM(this->get_logger(), "[person <" << _id << ">] set to be alias of <" << _alias << ">");
   }
   _alias = id;
   id_msg.data = id;
-  alias_pub.publish(id_msg);
+  alias_pub->publish(id_msg);
 }
 
 void ManagedPerson::setLocationConfidence(float confidence)
 {
   _loc_confidence = confidence;
   float_msg.data = confidence;
-  loc_confidence_pub.publish(float_msg);
+  loc_confidence_pub->publish(float_msg);
 }
 
 
@@ -133,9 +133,9 @@ void ManagedPerson::update(ID face_id, ID body_id, ID voice_id, chrono::millisec
       {
         _loc_confidence = 0.;
         _loc_confidence_dirty = true;
-        ROS_WARN_STREAM("[person <" << _id << ">] not seen for more than "
+        RCLCPP_WARN_STREAM(this->get_logger(), "[person <" << _id << ">] not seen for more than "
                                     << LIFETIME_UNTRACKED_PERSON.count()
-                                    << ". Not publishing tf frame anymore.");
+                                    << ". Not publishing tf frame anymore.");    
       }
     }
     else  // not tracked, but lifetime *not yet expired*
@@ -181,29 +181,33 @@ void ManagedPerson::publishFrame()
 
   if (!target_frame.empty())
   {
-    if (_tf_buffer->canTransform(_tf_reference_frame, target_frame, ros::Time(0)))
+    //  odom2laser_msg = tf_buffer_.lookupTransform(
+    //     "odom", "base_laser_link", tf2::timeFromSec(rclcpp::Time(msg->header.stamp).seconds()));
+    //   tf2::fromMsg(odom2laser_msg, odom2laser);
+    
+    if (_tf_buffer->canTransform(_tf_reference_frame, target_frame, tf2::TimePointZero))
     {
-      ROS_INFO_STREAM_ONCE("[person <" << _id << ">] broadcast transform "
+      RCLCPP_INFO_STREAM_ONCE(this->get_logger(),"[person <" << _id << ">] broadcast transform "
                                        << _tf_reference_frame << " <-> " << target_frame);
       try
       {
         _transform =
-            _tf_buffer->lookupTransform(_tf_reference_frame, target_frame, ros::Time(0));
+            _tf_buffer->lookupTransform(_tf_reference_frame, target_frame, tf2::TimePointZero);
 
-        _transform.header.stamp = ros::Time::now();
+        _transform.header.stamp = this->get_clock()->now();
         _transform.child_frame_id = _tf_frame;
 
-        _tf_br.sendTransform(_transform);
+        _tf_br->sendTransform(_transform);
         _had_transform_at_least_once = true;
       }
-      catch (tf2::TransformException ex)
+      catch (tf2::TransformException & ex)
       {
-        ROS_WARN("%s", ex.what());
+        RCLCPP_WARN(this->get_logger(), ex.what());
       }
     }
     else
     {
-      ROS_INFO_STREAM_ONCE("[person <" << _id << ">] can not publish transform (either reference frame <"
+      RCLCPP_INFO_STREAM_ONCE(this->get_logger(),"[person <" << _id << ">] can not publish transform (either reference frame <"
                                        << _tf_reference_frame << "> or target frame <"
                                        << target_frame << "> are not available)");
     }
@@ -212,7 +216,7 @@ void ManagedPerson::publishFrame()
   {
     if (!_had_transform_at_least_once)
     {
-      ROS_INFO_STREAM_ONCE("[person <" << _id << ">] no face, body or voice TF frame avail. Can not yet broadcast frame <"
+      RCLCPP_INFO_STREAM_ONCE(this->get_logger(),"[person <" << _id << ">] no face, body or voice TF frame avail. Can not yet broadcast frame <"
                                        << _tf_frame << ">.");
     }
     else
@@ -220,8 +224,8 @@ void ManagedPerson::publishFrame()
       // publish the last known transform, until loc_confidence == 0
       if (_loc_confidence > 0)
       {
-        _transform.header.stamp = ros::Time::now();
-        _tf_br.sendTransform(_transform);
+        _transform.header.stamp = this->get_clock()->now();
+        _tf_br->sendTransform(_transform);
       }
     }
   }

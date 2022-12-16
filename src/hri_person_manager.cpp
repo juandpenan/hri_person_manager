@@ -1,31 +1,29 @@
-#include <std_msgs/String.h>
-#include <std_msgs/Bool.h>
-#include <std_msgs/Float32.h>
-#include <hri_msgs/IdsMatch.h>
-#include <hri_msgs/IdsList.h>
-#include <std_srvs/Empty.h>
-#include <ros/ros.h>
-#include <geometry_msgs/TransformStamped.h>
-#include <tf2_ros/transform_listener.h>
-#include <hri/hri.h>
-#include <hri/base.h>
+
+
+#include <hri_msgs/msg/ids_match.hpp>
+#include <hri_msgs/msg/ids_list.hpp>
+#include <std_srvs/srv/empty.hpp>
+
+
+#include "tf2_ros/transform_listener.h"
+#include <hri/hri.hpp>
 #include <thread>
-#include <chrono>
-#include <map>
 #include <array>
 #include <functional>
 
-#include "hri/body.h"
-#include "hri/face.h"
-#include "hri/voice.h"
-#include "person_matcher.h"
-#include "managed_person.h"
-#include "ros/node_handle.h"
+#include "hri/body.hpp"
+#include "hri/face.hpp"
+#include "hri/voice.hpp"
+#include "hri_person_manager/person_matcher.hpp"
+#include "hri_person_manager/managed_person.hpp"
+#include "rclcpp/rclcpp.hpp"
 
-using namespace ros;
+
+
 using namespace hri;
 using namespace std;
-
+using namespace std::placeholders;
+using namespace std::chrono_literals;
 
 // after TIME_TO_DISAPPEAR seconds *without* actively seeing the person, the person tf
 // frame is not published anymore.
@@ -37,22 +35,42 @@ enum UpdateType
   REMOVE
 };
 
-typedef std::tuple<UpdateType, ID, FeatureType, ID, FeatureType, float> Association;
+typedef std::tuple<UpdateType, hri::ID, FeatureType, hri::ID, FeatureType, float> Association;
 
-class PersonManager
+class PersonManager : public rclcpp::Node
 {
 public:
-  PersonManager(NodeHandle& nh, const string& reference_frame)
-    : _nh(nh), _reference_frame(reference_frame), tfListener(tfBuffer)
+  PersonManager()
+    :  Node("hri_person_manager"),tfListener(tfBuffer), person_matcher()
   {
-    tracked_persons_pub = _nh.advertise<hri_msgs::IdsList>("/humans/persons/tracked", 1, true);
-    known_persons_pub = _nh.advertise<hri_msgs::IdsList>("/humans/persons/known", 1, true);
-    humans_graph_pub = _nh.advertise<std_msgs::String>("/humans/graph", 1, true);
+    
+     
+
+    tracked_persons_pub = this->create_publisher<hri_msgs::msg::IdsList>("/humans/persons/tracked", 1);
+    known_persons_pub = this->create_publisher<hri_msgs::msg::IdsList>("/humans/persons/known", 1);
+    humans_graph_pub = this->create_publisher<std_msgs::msg::String>("/humans/graph", 1);
 
 
-    candidates = _nh.subscribe<hri_msgs::IdsMatch>(
-        "/humans/candidate_matches", 10, bind(&PersonManager::onCandidateMatch, this, _1));
+    candidates = this->create_subscription<hri_msgs::msg::IdsMatch>(
+        "/humans/candidate_matches", 10,std::bind(&PersonManager::onCandidateMatch, this, _1));
 
+    this->declare_parameter("reference_frame", "map");
+    this->declare_parameter("match_threshold", 0.5);
+    _reference_frame =
+      this->get_parameter("reference_frame").get_parameter_value().get<std::string>();
+    match_threshold =
+      this->get_parameter("match_threshold").get_parameter_value().get<float>();
+
+      
+    person_matcher.set_threshold(match_threshold);
+ 
+
+    timer_ = this->create_wall_timer(
+      100ms, std::bind(&PersonManager::timer_callback, this));
+
+      
+    reset_service = create_service<std_srvs::srv::Empty>("reset",std::bind(&PersonManager::reset,this,_1,_2,_3));        
+    
     hri_listener.onFace(bind(&PersonManager::onFace, this, _1));
     hri_listener.onFaceLost(bind(&PersonManager::onFeatureLost, this, _1));
     hri_listener.onBody(bind(&PersonManager::onBody, this, _1));
@@ -60,27 +78,43 @@ public:
     hri_listener.onVoice(bind(&PersonManager::onVoice, this, _1));
     hri_listener.onVoiceLost(bind(&PersonManager::onFeatureLost, this, _1));
 
+    t0 = this->get_clock()->now();
 
-    ROS_INFO("hri_person_manager ready. Waiting for candidate associations on /humans/candidate_matches");
+    RCLCPP_INFO(this->get_logger(),"hri_person_manager ready. Waiting for candidate associations on /humans/candidate_matches");
   }
 
-  bool reset(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+  void timer_callback()
   {
-    ROS_WARN("Clearing all associations between persons, faces, bodies, voices");
+    float match_threshold =
+      this->get_parameter("match_threshold").get_parameter_value().get<float>();
+
+    chrono::nanoseconds elapsed_time(this->get_clock()->now().nanoseconds() - t0.nanoseconds());
+    publish_persons(chrono::duration_cast<chrono::milliseconds>(elapsed_time));
+
+    std::vector<rclcpp::Parameter> all_new_parameters{rclcpp::Parameter("my_parameter", "world")};
+    this->set_parameters(all_new_parameters);
+  }
+
+  bool reset(
+    const std::shared_ptr<rmw_request_id_t>/*request_header*/,
+    const std::shared_ptr<std_srvs::srv::Empty::Request>/*req*/,
+    std::shared_ptr<std_srvs::srv::Empty::Response>/*res*/)
+  {
+    RCLCPP_WARN(this->get_logger(),"Clearing all associations between persons, faces, bodies, voices");
     person_matcher.reset();
 
     persons.clear();
     previously_tracked.clear();
     anonymous_persons.clear();
 
-    hri_msgs::IdsList persons_list;
-    tracked_persons_pub.publish(persons_list);
-    known_persons_pub.publish(persons_list);
+    hri_msgs::msg::IdsList persons_list;
+    tracked_persons_pub->publish(persons_list);
+    known_persons_pub->publish(persons_list);
 
     return true;
   }
 
-  void onCandidateMatch(hri_msgs::IdsMatchConstPtr match)
+  void onCandidateMatch(hri_msgs::msg::IdsMatch::SharedPtr match)
   {
     FeatureType type1, type2;
     ID id1, id2;
@@ -89,72 +123,72 @@ public:
 
     if (id1.empty())
     {
-      ROS_ERROR("received an empty id for id1");
+       RCLCPP_ERROR(this->get_logger(),"received an empty id for id1");
       return;
     }
 
     id2 = match->id2;
 
-    if (id2.empty() && match->id2_type != hri_msgs::IdsMatch::UNSET)
+    if (id2.empty() && match->id2_type != hri_msgs::msg::IdsMatch::UNSET)
     {
-      ROS_ERROR_STREAM("received an empty id for id2, with type set to " << match->id2_type);
+       RCLCPP_ERROR_STREAM(this->get_logger(),"received an empty id for id2, with type set to " << match->id2_type);
       return;
     }
 
     if (id1 == id2)
     {
-      ROS_ERROR("candidate_matches with identical id1 and id2. Skipping.");
+       RCLCPP_ERROR(this->get_logger(),"candidate_matches with identical id1 and id2. Skipping.");
       return;
     }
 
     switch (match->id1_type)
     {
-      case hri_msgs::IdsMatch::PERSON:
+      case hri_msgs::msg::IdsMatch::PERSON:
         type1 = FeatureType::person;
         break;
 
-      case hri_msgs::IdsMatch::FACE:
+      case hri_msgs::msg::IdsMatch::FACE:
         type1 = FeatureType::face;
         break;
 
-      case hri_msgs::IdsMatch::BODY:
+      case hri_msgs::msg::IdsMatch::BODY:
         type1 = FeatureType::body;
         break;
 
-      case hri_msgs::IdsMatch::VOICE:
+      case hri_msgs::msg::IdsMatch::VOICE:
         type1 = FeatureType::voice;
         break;
 
       default:
-        ROS_ERROR_STREAM("received an invalid type for id1: " << match->id1_type);
+         RCLCPP_ERROR_STREAM(this->get_logger(),"received an invalid type for id1: " << match->id1_type);
         return;
     }
 
     switch (match->id2_type)
     {
-      case hri_msgs::IdsMatch::PERSON:
+      case hri_msgs::msg::IdsMatch::PERSON:
         type2 = FeatureType::person;
         break;
 
-      case hri_msgs::IdsMatch::FACE:
+      case hri_msgs::msg::IdsMatch::FACE:
         type2 = FeatureType::face;
         break;
 
-      case hri_msgs::IdsMatch::BODY:
+      case hri_msgs::msg::IdsMatch::BODY:
         type2 = FeatureType::body;
         break;
 
-      case hri_msgs::IdsMatch::VOICE:
+      case hri_msgs::msg::IdsMatch::VOICE:
         type2 = FeatureType::voice;
         break;
 
-      case hri_msgs::IdsMatch::UNSET:
+      case hri_msgs::msg::IdsMatch::UNSET:
         type2 = FeatureType::person;
         id2 = hri::ANONYMOUS;
         break;
 
       default:
-        ROS_ERROR_STREAM("received an invalid type for id2: " << match->id2_type);
+         RCLCPP_ERROR_STREAM(this->get_logger(),"received an invalid type for id2: " << match->id2_type);
         return;
     }
 
@@ -248,7 +282,7 @@ public:
       // => remove the anonymous person
       if ((type1 == FeatureType::person) && anonymous_persons.count(id2) != 0)
       {
-        ROS_WARN_STREAM("removing anonymous person "
+         RCLCPP_WARN_STREAM(this->get_logger(),"removing anonymous person "
                         << hri::ANONYMOUS + id2 << " as it is not anonymous anymore");
         anonymous_persons.erase(id2);
         auto removed_persons = person_matcher.erase(hri::ANONYMOUS + id2);
@@ -259,7 +293,7 @@ public:
       }
       else if ((type2 == FeatureType::person) && anonymous_persons.count(id1) != 0)
       {
-        ROS_WARN_STREAM("removing anonymous person "
+         RCLCPP_WARN_STREAM(this->get_logger(),"removing anonymous person "
                         << hri::ANONYMOUS + id1 << " as it is not anonymous anymore");
         anonymous_persons.erase(id1);
         auto removed_persons = person_matcher.erase(hri::ANONYMOUS + id1);
@@ -307,9 +341,9 @@ public:
     // This is not handled yet.
   }
 
-  void initialize_person(ID id)
+  void initialize_person(hri::ID id)
   {
-    persons[id] = make_shared<ManagedPerson>(_nh, id, tfBuffer, _reference_frame);
+    persons[id] = std::make_shared<ManagedPerson>(id, tfBuffer, _reference_frame);
 
     publishKnownPersons();
   }
@@ -317,14 +351,14 @@ public:
   void publishKnownPersons()
   {
     // publish an updated list of all known persons
-    hri_msgs::IdsList persons_list;
+    hri_msgs::msg::IdsList persons_list;
 
     for (auto const& kv : persons)
     {
       persons_list.ids.push_back(kv.first);
     }
 
-    known_persons_pub.publish(persons_list);
+    known_persons_pub->publish(persons_list);
   }
 
   void remove_person(ID id)
@@ -346,7 +380,7 @@ public:
     }
 
     // publish an updated list of known/tracked persons
-    hri_msgs::IdsList persons_list;
+    hri_msgs::msg::IdsList persons_list;
     for (auto const& kv : persons)
     {
       if (kv.second->activelyTracked())
@@ -355,7 +389,7 @@ public:
       }
     }
 
-    tracked_persons_pub.publish(persons_list);
+    tracked_persons_pub->publish(persons_list);
 
     publishKnownPersons();
   }
@@ -371,7 +405,7 @@ public:
 
     if (!updates.empty())
     {
-      ROS_INFO_STREAM("Updating graph:");
+       RCLCPP_INFO_STREAM(this->get_logger(),"Updating graph:");
     }
     for (auto u : updates)
     {
@@ -381,7 +415,7 @@ public:
       {
         case REMOVE:
         {
-          ROS_INFO_STREAM("- Remove ID: " << id1);
+           RCLCPP_INFO_STREAM(this->get_logger(),"- Remove ID: " << id1);
 
           // while erasing the id id1, the person matcher might create
           // orphans that are as well deleted by the person_matcher.
@@ -397,7 +431,7 @@ public:
         }
         break;
         case RELATION:
-          ROS_INFO_STREAM("- Update relation: " << id1 << " (" << type1 << ") <--> "
+          RCLCPP_INFO_STREAM(this->get_logger(),"- Update relation: " << id1 << " (" << type1 << ") <--> "
                                                 << id2 << " (" << type2 << "); p=" << p);
           update(id1, type1, id2, type2, p);
           break;
@@ -408,9 +442,9 @@ public:
 
     auto person_associations = person_matcher.get_all_associations();
 
-    std_msgs::String graphviz;
+    std_msgs::msg::String graphviz;
     graphviz.data = person_matcher.get_graphviz();
-    humans_graph_pub.publish(graphviz);
+    humans_graph_pub->publish(graphviz);
 
     associated_faces.clear();
     associated_bodies.clear();
@@ -455,7 +489,7 @@ public:
 
     ////////////////////////////////////////////
     // publish the list of currently actively tracked persons
-    hri_msgs::IdsList persons_list;
+    hri_msgs::msg::IdsList persons_list;
     vector<ID> actively_tracked;
 
     for (auto const& kv : persons)
@@ -469,83 +503,66 @@ public:
 
     if (actively_tracked != previously_tracked)
     {
-      tracked_persons_pub.publish(persons_list);
+      tracked_persons_pub->publish(persons_list);
       previously_tracked = actively_tracked;
     }
   }
 
-  void set_threshold(float threshold)
-  {
-    person_matcher.set_threshold(threshold);
-  }
+
 
 private:
-  NodeHandle& _nh;
+ 
+  PersonMatcher person_matcher; 
 
-  map<ID, shared_ptr<ManagedPerson>> persons;
-  vector<ID> previously_tracked;
-  set<ID> anonymous_persons;
+  map<hri::ID, std::shared_ptr<ManagedPerson>> persons;
+  vector<hri::ID> previously_tracked;
+  set<hri::ID> anonymous_persons;
 
   vector<Association> updates;
 
   // hold the list of faces/bodies/voices that are already associated to a person
   // (so that we do not create un-needed anonymous persons)
-  set<ID> associated_faces;
-  set<ID> associated_bodies;
-  set<ID> associated_voices;
+  set<hri::ID> associated_faces;
+  set<hri::ID> associated_bodies;
+  set<hri::ID> associated_voices;
 
   HRIListener hri_listener;
 
   // actively tracked persons (eg, one of face_id, body_id or voice_id is not empty for that person)
-  Publisher tracked_persons_pub;
+  rclcpp::Publisher<hri_msgs::msg::IdsList>::SharedPtr tracked_persons_pub;
   // known persons: either actively tracked ones, or not tracked anymore (but
   // still known to the robot)
-  Publisher known_persons_pub;
+  rclcpp::Publisher<hri_msgs::msg::IdsList>::SharedPtr known_persons_pub;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr humans_graph_pub;
 
-  Publisher humans_graph_pub;
 
-  PersonMatcher person_matcher;
-
-  tf2_ros::Buffer tfBuffer;
+  tf2::BufferCore tfBuffer;
   tf2_ros::TransformListener tfListener;
 
-  string _reference_frame;
+  float match_threshold;
 
-  ros::Subscriber candidates;
+  rclcpp::Time t0;
+
+  std::string _reference_frame;
+
+  rclcpp::Service<std_srvs::srv::Empty>::SharedPtr reset_service;
+
+  rclcpp::TimerBase::SharedPtr timer_;
+  
+  rclcpp::Subscription<hri_msgs::msg::IdsMatch>::SharedPtr candidates;
 };
 
-int main(int argc, char** argv)
+int main(int argc, char * argv[])
 {
-  ros::init(argc, argv, "hri_person_manager");
-  ros::NodeHandle nh;
+  rclcpp::init(argc, argv);
 
+  auto node = std::make_shared<PersonManager>();
 
-  float match_threshold;
-  ros::param::param<float>("/humans/match_threshold", match_threshold, 0.5);
+  rclcpp::spin(node);
 
-  string reference_frame;
-  ros::param::param<string>("/humans/reference_frame", reference_frame, "map");
-
-
-  PersonManager pm(nh, reference_frame);
-
-  pm.set_threshold(match_threshold);
-
-  ros::ServiceServer reset_service =
-      nh.advertiseService("/hri_person_manager/reset", &PersonManager::reset, &pm);
-
-  ros::Rate loop_rate(10);
-
-  auto t0 = ros::Time::now();
-  while (ros::ok())
-  {
-    t0 = ros::Time::now();
-    loop_rate.sleep();
-    ros::spinOnce();
-
-    chrono::nanoseconds elapsed_time((ros::Time::now() - t0).toNSec());
-    pm.publish_persons(chrono::duration_cast<chrono::milliseconds>(elapsed_time));
-  }
-
+  rclcpp::shutdown();
   return 0;
 }
+
+
+

@@ -1,16 +1,20 @@
+#ifndef MANAGED_PERSON_H
+#define MANAGED_PERSON_H
+
 #include <iostream>
 #include <chrono>
 #include <string>
-#include <geometry_msgs/TransformStamped.h>
-#include <ros/node_handle.h>
-#include <ros/publisher.h>
-#include <tf2_ros/buffer.h>
-#include <tf2_ros/transform_broadcaster.h>
-#include <hri/base.h>
 
-#include <std_msgs/String.h>
-#include <std_msgs/Bool.h>
-#include <std_msgs/Float32.h>
+#include <geometry_msgs/msg/transform_stamped.hpp>
+#include "rclcpp/rclcpp.hpp"
+#include <tf2_ros/buffer.h>
+#include "tf2_ros/static_transform_broadcaster.h"
+#include <hri/FeatureTracker.hpp>
+
+#include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float32.hpp>
+
 
 namespace hri
 {
@@ -23,10 +27,11 @@ const std::chrono::seconds LIFETIME_UNTRACKED_PERSON(10);
 const std::string PERSON("person_");
 const std::string ANONYMOUS("anonymous_person_");
 
-class ManagedPerson
+class ManagedPerson : public rclcpp::Node
 {
 public:
-  ManagedPerson(ros::NodeHandle& nh, hri::ID id, tf2_ros::Buffer& tf_buffer,
+
+  ManagedPerson(hri::ID id, tf2::BufferCore& tf_buffer,
                 const std::string& reference_frame);
 
   ~ManagedPerson();
@@ -75,26 +80,28 @@ public:
 private:
   void publishFrame();
 
-  ros::NodeHandle* _nh;
-
+ 
   hri::ID _id;
 
-  ros::Publisher face_id_pub;
-  ros::Publisher body_id_pub;
-  ros::Publisher voice_id_pub;
-  ros::Publisher alias_pub;
-  ros::Publisher anonymous_pub;
-  ros::Publisher loc_confidence_pub;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr face_id_pub;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr body_id_pub;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr voice_id_pub;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr alias_pub; 
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr anonymous_pub; 
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr loc_confidence_pub;
+
 
   bool _actively_tracked;
 
   std::string _tf_frame;
   std::string _tf_reference_frame;
 
-  tf2_ros::Buffer* _tf_buffer;
-  tf2_ros::TransformBroadcaster _tf_br;
+  tf2::BufferCore* _tf_buffer;
 
-  geometry_msgs::TransformStamped _transform;
+  std::shared_ptr<tf2_ros::StaticTransformBroadcaster> _tf_br;
+  
+
+  geometry_msgs::msg::TransformStamped _transform;
   bool _had_transform_at_least_once;
 
   hri::ID _face_id;
@@ -104,9 +111,9 @@ private:
   bool _loc_confidence_dirty;
   bool _anonymous;
 
-  std_msgs::String id_msg;
-  std_msgs::Float32 float_msg;
-  std_msgs::Bool bool_msg;
+  std_msgs::msg::String id_msg;
+  std_msgs::msg::Float32 float_msg;
+  std_msgs::msg::Bool bool_msg;
 
   hri::ID _alias;
 
@@ -115,3 +122,4 @@ private:
 
 
 }  // namespace hri
+#endif

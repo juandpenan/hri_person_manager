@@ -32,7 +32,7 @@
 #include <map>
 #include <vector>
 #include <tuple>
-#include <hri/base.h>
+#include <hri/FeatureTracker.hpp>
 
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/pending/property.hpp>

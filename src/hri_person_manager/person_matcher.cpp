@@ -33,13 +33,13 @@
 #include <stdexcept>
 #include <tuple>
 
-#include "person_matcher.h"
-#include "managed_person.h"
+#include "hri_person_manager/person_matcher.hpp"
+#include "hri_person_manager/managed_person.hpp"
 
 #include <boost/graph/detail/adjacency_list.hpp>
 #include <boost/graph/graph_traits.hpp>
 #include <boost/graph/dijkstra_shortest_paths.hpp>
-#include "hri/base.h"
+#include <hri/FeatureTracker.hpp>
 #include <boost/graph/graphviz.hpp>
 
 using namespace std;
@@ -248,7 +248,7 @@ std::set<ID> PersonMatcher::clear_orphans()
         found_orphan = true;
 
         ID id = get(&VertexProps::name, g, *v);
-        ROS_INFO_STREAM(" ---> clearing orphan " << id);
+        RCLCPP_INFO_STREAM_ONCE(rclcpp::get_logger("person_matcher")," ---> clearing orphan " << id);
 
         // is it a person node? if so, store it
         if (id_types[person].count(id))

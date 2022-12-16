@@ -1,82 +1,71 @@
-cmake_minimum_required(VERSION 3.1.0)
+cmake_minimum_required(VERSION 3.5)
 project(hri_person_manager)
 
-## Compile as C++11, supported in ROS Kinetic and newer
-set (CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_BUILD_TYPE Debug)
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(hri REQUIRED)
+find_package(tf2 REQUIRED)
+find_package(tf2_ros REQUIRED)
+find_package(hri_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 
-find_package(catkin REQUIRED COMPONENTS
-  hri
-  tf2_ros
-  hri_msgs
-  std_srvs
-  roscpp
-)
+set(dependencies
+    rclcpp
+    hri  
+    tf2  
+    tf2_ros
+    hri_msgs    
+    std_srvs    
+  )
 
-find_package(Boost REQUIRED) # for Boost graph library
+include_directories(include)
 
-
-include_directories(
-    SYSTEM
-    ${catkin_INCLUDE_DIRS}
-    ${Boost_INCLUDE_DIRS}
-)
-
-catkin_package(
-  LIBRARIES hri_person_manager
-  CATKIN_DEPENDS hri tf2_ros hri_msgs roscpp std_srvs
-)
-
-
-
-add_executable(${PROJECT_NAME}_node 
-    src/hri_person_manager.cpp
-    src/person_matcher.cpp
-    src/managed_person.cpp)
-
-## Rename C++ executable without prefix
-set_target_properties(${PROJECT_NAME}_node PROPERTIES OUTPUT_NAME node PREFIX "")
-
-## Add cmake target dependencies of the executable
-add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
-
-
-target_link_libraries(${PROJECT_NAME}_node
-   ${catkin_LIBRARIES}
-)
-
-
-###########################################################
-# Tests
-
-if(CATKIN_ENABLE_TESTING)
-
-include_directories(
-    src
-)
-
-find_package(rostest REQUIRED)
-
-add_rostest_gmock(test_hri_person_manager test/test_hri_person_manager.test test/test_hri_person_manager.cpp src/person_matcher.cpp)
-target_include_directories(test_hri_person_manager PRIVATE ${rostest_INCLUDE_DIRS})
-target_link_libraries(test_hri_person_manager ${catkin_LIBRARIES})
-
-endif() # CATKIN_ENABLE_TESTING
-
-
-###########################################################
-# Install
-
-install(TARGETS ${PROJECT_NAME}_node
-  RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
-)
-
-
-## Mark other files for installation (e.g. launch and bag files, etc.)
-# install(FILES
-#   # myfile1
-#   # myfile2
-#   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
+# include_directories(
+#     SYSTEM
+#     ${catkin_INCLUDE_DIRS}
+#     ${Boost_INCLUDE_DIRS}
 # )
 
+add_library(${PROJECT_NAME} SHARED
+  src/hri_person_manager/managed_person.cpp
+  src/hri_person_manager/person_matcher.cpp
+)
+ament_target_dependencies(${PROJECT_NAME} ${dependencies})
 
+
+
+add_executable(hri_person_manager_node src/hri_person_manager.cpp)
+ament_target_dependencies(hri_person_manager_node ${dependencies})
+target_link_libraries(hri_person_manager_node ${PROJECT_NAME})
+
+install(TARGETS
+  ${PROJECT_NAME}
+  hri_person_manager_node
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION lib/${PROJECT_NAME}
+)
+
+install(
+  DIRECTORY include
+  DESTINATION include
+)
+
+
+# install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
+
+# if(BUILD_TESTING)
+#   find_package(ament_lint_auto REQUIRED)
+#   ament_lint_auto_find_test_dependencies()
+
+#   set(ament_cmake_cpplint_FOUND TRUE)
+#   ament_lint_auto_find_test_dependencies()
+
+#   find_package(ament_cmake_gtest REQUIRED)
+#   add_subdirectory(tests)
+# endif()
+ament_package()
