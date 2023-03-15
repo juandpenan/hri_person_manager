@@ -26,12 +26,20 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 // POSSIBILITY OF SUCH DAMAGE.
 
+#include <boost/graph/filtered_graph.hpp>
+#include <boost/graph/graph_utility.hpp>
 #include <boost/graph/properties.hpp>
+#include <boost/range/iterator_range_core.hpp>
 #include <cmath>
+#include <iterator>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <tuple>
+#include <array>
+#include <algorithm>
+#include <random>
+#include <functional>
 
 #include "hri_person_manager/person_matcher.hpp"
 #include "hri_person_manager/managed_person.hpp"
@@ -39,70 +47,111 @@
 #include <boost/graph/detail/adjacency_list.hpp>
 #include <boost/graph/graph_traits.hpp>
 #include <boost/graph/dijkstra_shortest_paths.hpp>
-#include <hri/FeatureTracker.hpp>
+#include <boost/graph/kruskal_min_spanning_tree.hpp>
+#include <boost/graph/connected_components.hpp>
 #include <boost/graph/graphviz.hpp>
 
-using namespace std;
-using namespace hri;
-using namespace boost;
+// // using namespace std;
+// // using namespace hri;
+// // using namespace boost;
 
-typedef std::map<hri::FeatureType, std::map<hri::ID, Vertex>> IdVertexMap;
+typedef std::map<hri::FeatureType, std::map<hri::ID, Node>> IdNodeMap;
+
+/** not super optimised, but not called very often either
+ */
+hri::ID generate_random_id(const int len = 5)
+{
+  static const std::array<std::string, 26> alphanum{
+    { "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+      "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z" }
+  };
+  std::string tmp_s;
+  tmp_s.reserve(len);
+
+  std::random_device dev;
+  std::mt19937 rng(dev());
+  std::uniform_int_distribution<uint32_t> rnd_dist(0, alphanum.size() - 1);
+
+  for (int i = 0; i < len; ++i)
+  {
+    tmp_s += alphanum[rnd_dist(rng)];
+  }
+
+  return tmp_s;
+}
+
+hri::ID generate_hash_id(hri::ID id, const int len = 5)
+{
+  static const std::array<std::string, 26> alphanum{
+    { "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m",
+      "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z" }
+  };
+  std::string tmp_s;
+  tmp_s.reserve(len);
+
+  auto hash = std::hash<hri::ID>{}(id);
+
+  for (int i = 0; i < len; ++i)
+  {
+    tmp_s += alphanum[hash % 10];
+    hash /= 10;
+  }
+
+  return tmp_s;
+}
+
+const std::map<unsigned int, std::string> colorscheme{
+  { 0, "white" },           { 1, "cadetblue1" },  { 2, "cornsilk1" },
+  { 3, "darkolivegreen2" }, { 4, "darkorange1" }, { 5, "gold" },
+  { 6, "gray66" },          { 7, "lightgreen" },  { 8, "lightslateblue" },
+  { 9, "mediumorchid1" },   { 10, "turquoise1" }
+};
 
 //////////// helpers for write_graphviz ////////////////
 class node_label_writer
 {
 public:
-  node_label_writer(Graph _g, std::map<hri::FeatureType, std::set<hri::ID>> _id_types)
-    : g(_g), id_types(_id_types)
+   node_label_writer(Graph _g) : g(_g)
+   {
+   }
+  template <class NodeOrEdge>
+  void operator()(std::ostream& out, const NodeOrEdge& v) const
   {
-  }
-  template <class VertexOrEdge>
-  void operator()(std::ostream& out, const VertexOrEdge& v) const
-  {
-    auto name = get(&VertexProps::name, g, v);
+    auto name = g[v].name;
+    auto type = g[v].type;
 
-    hri::FeatureType type;
-
-    for (auto _type : { face, body, voice, person })
-    {
-      if (id_types.at(_type).count(name))
-      {
-        type = _type;
-        break;
-      }
-    }
-    string feat;
+    std::string feat;
     switch (type)
     {
-      case face:
+      case hri::face:
         feat = " [face]";
         break;
-      case body:
+      case hri::body:
         feat = " [body]";
         break;
-      case voice:
+      case hri::voice:
         feat = " [voice]";
         break;
-      case person:
-      case tracked_person:
+      case hri::person:
+      case hri::tracked_person:
         feat = " [person]";
         break;
     }
 
+    auto color = colorscheme.at(g[v].association_id % colorscheme.size());
 
-    if (name.find(hri::ANONYMOUS) != std::string::npos)
+    if (g[v].anonymous)
     {
-      out << "[style=dashed shape=box label=\"" << name << feat << "\"]";
+      std::cout << "[style=dashed shape=box color=" << color << " label=\"" << name << feat << "\"]" << std::endl;
     }
     else
     {
-      out << "[shape=box label=\"" << name << feat << "\"]";
+      std::cout << "[style=filled shape=box color=" << color << " label=\"" << name << feat << "\"]" << std::endl;
     }
   }
 
 private:
   Graph g;
-  std::map<hri::FeatureType, std::set<hri::ID>> id_types;
 };
 
 class weight_label_writer
@@ -111,11 +160,11 @@ public:
   weight_label_writer(Graph _g) : g(_g)
   {
   }
-  template <class VertexOrEdge>
-  void operator()(std::ostream& out, const VertexOrEdge& e) const
+  template <class NodeOrEdge>
+  void operator()(std::ostream & out, const NodeOrEdge& e) const
   {
     auto w = get(boost::edge_weight_t(), g, e);
-    out << "[label=\"" << 1 / exp(w) << "\"]";
+    std::cout << "[label=\"" << 1 / exp(w) << "\"]" << std::endl;
   }
 
 private:
@@ -123,258 +172,711 @@ private:
 };
 ///////////////////////////////////////////////////////////////////////////
 
-Vertex get_vertex(const Graph& g, const ID id)
+PersonMatcher::PersonMatcher(float likelihood_threshold, bool _random_anonymous_name)
+  : random_anonymous_name(_random_anonymous_name)
 {
-  Graph::vertex_iterator v, vend;
-  for (boost::tie(v, vend) = vertices(g); v != vend; ++v)
+  set_threshold(likelihood_threshold);
+}
+
+void PersonMatcher::prune_unlikely_connections()
+{
+  std::set<Edge> edges_to_prune;
+  for (const auto& e : boost::make_iterator_range(edges(g)))
   {
-    if (id == get(&VertexProps::name, g, *v))
+    if (g[e].likelihood < threshold)
     {
-      return *v;
+      edges_to_prune.insert(e);
     }
   }
 
-  return INEXISTANT_VERTEX;
-}
-
-PersonMatcher::PersonMatcher(float likelihood_threshold)
-{
-  threshold = log(1 / likelihood_threshold);
-
-  for (auto type : { face, body, voice, person })
+  for (const auto& e : edges_to_prune)
   {
-    id_types[type] = set<ID>();
+    std::cout << "Removing edge from " << g[source(e, g)].name << " to " << g[target(e, g)].name
+         << ": likelihood=" << g[e].likelihood << " below threshold=" << threshold << std::endl;
+    remove_edge(e, g);
   }
 }
 
-void PersonMatcher::set_threshold(float likelihood_threshold)
+std::vector<NodeSets> PersonMatcher::build_partitions(Nodes nodes) const
 {
-  threshold = log(1 / likelihood_threshold);
+  Node head = nodes.back();
+  auto head_type =
+      g[head].type;  // note that the node descriptors passed to build_partition are global
+
+  nodes.pop_back();
+
+  if (nodes.size() == 0)
+  {
+    return { { { { head }, head_type } } };
+  }
+
+  // 1. recursively get partitions for a subset of nodes
+  auto partitions = build_partitions(nodes);
+
+  std::vector<NodeSets> updated_partitions;
+
+  // 2. add 'head' node to existing partitions if valid
+  for (const NodeSets& partition : partitions)
+  {
+    // 2.1 add 'head' to each subgraphs, one after the other
+    for (size_t idx = 0; idx < partition.size(); idx++)
+    {
+      auto feature_mask = partition[idx].second;
+
+      // a valid partition must not contain the same feature twice
+      if (!(feature_mask & head_type))
+      {
+        // copy the current partition
+        NodeSets new_partition(partition);
+
+        new_partition[idx].first.push_back(head);
+        new_partition[idx].second = feature_mask | head_type;
+
+        updated_partitions.push_back(new_partition);
+      }
+    }
+
+
+    // 2.2 add a last partition made of [ {head}, other partitions... ]
+    NodeSets new_partition(partition);
+    new_partition.push_back({ { head }, head_type });
+    updated_partitions.push_back(new_partition);
+  }
+
+  return updated_partitions;
 }
 
-void PersonMatcher::update(Relations relations)
+std::vector<Subgraphs> PersonMatcher::get_partitions(Graph& graph)
 {
-  ID id1, id2;
-  FeatureType type1, type2;
-  float p;
+  Nodes nodes;
+  for (const auto& n : boost::make_iterator_range(vertices(graph)))
+  {
+    assert(graph[n].valid);
+    nodes.push_back(graph.local_to_global(n));
+  }
+
+  auto raw_partitions = build_partitions(nodes);
+
+  std::vector<Subgraphs> viable_partitions;
+
+  std::vector<int> component(num_vertices(graph));  // component map to call boost connected_components
+
+  // filter the partitions to only keep the *connected* ones
+  for (const auto& nodesets : raw_partitions)
+  {
+    Subgraphs partition;
+    bool connected = true;
+    for (const auto& nodeset : nodesets)
+    {
+      auto subgraph = g.create_subgraph(nodeset.first.begin(), nodeset.first.end());
+
+      auto nb_components = connected_components(
+          subgraph, &component[0]);  // (note that we do not need the component map `component`)
+
+      if (nb_components > 1)
+      {
+        connected = false;
+        break;
+      }
+      partition.push_back({ subgraph, nodeset.second });
+    }
+
+    if (connected)
+    {
+      viable_partitions.push_back(partition);
+    }
+  }
+
+  return viable_partitions;
+}
+
+
+std::string PersonMatcher::set_get_anonymous_id(std::vector<std::string> feature_ids)
+{
+  sort(feature_ids.begin(), feature_ids.end());
+
+  std::string anon_id;
+
+  // did we already assign an anonymous ID to one of these features?
+  for (std::string& id : feature_ids)
+  {
+    if (anonymous_ids_map.count(id) > 0)
+    {
+      anon_id = anonymous_ids_map.at(id);
+      break;
+    }
+  }
+
+  // found?
+  // erase all the anonymous_id_map entry that contain that anonymous id, to
+  // make sure a feature from *another* association does not end up re-using
+  // the same id
+  if (anon_id.size() != 0)
+  {
+    // cout << "Re-using anon id " << anon_id << endl;
+    for (auto i = anonymous_ids_map.begin(), last = anonymous_ids_map.end(); i != last;)
+    {
+      if ((i->second == anon_id))
+      {
+        i = anonymous_ids_map.erase(i);
+      }
+      else
+      {
+        ++i;
+      }
+    }
+  }
+  else  // not found? create new random id
+  {
+    if (random_anonymous_name)
+    {
+      // anon_id = hri::ANONYMOUS + generate_random_id();
+      anon_id = hri::ANONYMOUS + generate_hash_id(*feature_ids.begin());
+    }
+    else
+    {
+      anon_id = "anon" + std::to_string(incremental_anon_id);
+      incremental_anon_id++;
+    }
+    // cout << "Generating new anon id " << anon_id << endl;
+  }
+
+  for (std::string& id : feature_ids)
+  {
+    anonymous_ids_map[id] = anon_id;
+  }
+
+  return anon_id;
+}
+
+void PersonMatcher::add_anonymous_person(Subgraph& association)
+{
+  auto& subgraph = association.first;
+  assert(&subgraph.parent() == &g);
+  auto feature_mask = association.second;
+
+  // is there already a person in this association?
+  if (feature_mask & hri::FeatureType::person)
+  {
+    return;
+  }
+
+  std::vector<std::string> features_ids;
+  for (const auto& n : boost::make_iterator_range(vertices(subgraph)))
+  {
+    features_ids.push_back(subgraph[n].name);
+  }
+
+  // create a new global node for an anonymous person
+  auto anon = add_vertex(g);
+
+  g[anon].name = set_get_anonymous_id(features_ids);
+  g[anon].type = hri::FeatureType::person;
+  g[anon].anonymous = true;
+
+  // cout << "Adding anonymous person " << g[anon].name << endl;
+
+  // add the node to this association -- the vertex descriptor inside the
+  // subgraph might be different than in the global graph -> sub_node != anon
+  auto sub_node = add_vertex(anon, subgraph);
+
+  for (const auto& n : boost::make_iterator_range(vertices(subgraph)))
+  {
+    if (n != sub_node)
+    {
+      // adding an edge to a subgraph also adds it to the parent
+      auto e = add_edge(sub_node, n, subgraph).first;
+      subgraph[e].likelihood = threshold;
+      subgraph[e].weight = likelihood2weight(threshold);
+      subgraph[e].log_likelihood = log_likelihood(threshold);
+      subgraph[e].computed = true;
+    }
+  }
+}
+
+
+void PersonMatcher::clear_anonymous_persons()
+{
+  std::vector<Node> anonyms;
+
+  for (const auto& n : boost::make_iterator_range(vertices(g)))
+  {
+    if (g[n].anonymous == true)
+    {
+      anonyms.push_back(n);
+    }
+  }
+
+  for (const auto& n : anonyms)
+  {
+    clear_vertex(n, g);
+    g[n].valid = false;
+  }
+}
+
+void PersonMatcher::fully_connect_persons(Subgraph& association)
+{
+  auto& graph = association.first;
+  auto feature_mask = association.second;
+
+  // is there a person in this association?
+  if (!(feature_mask & hri::FeatureType::person))
+  {
+    return;
+  }
+
+  // required to operate on a *copy* of graph, otherwise operations like
+  // remove_edge do not work (probably because the edge might belong to other
+  // subgraphs)
+  auto graph_copy = clean_graph_copy(graph);
+
+  // 0. find the 'person' node
+  Node person;
+  for (const auto& n : boost::make_iterator_range(vertices(graph_copy)))
+  {
+    if (graph_copy[n].type == hri::FeatureType::person)
+    {
+      person = n;
+      break;
+    }
+  }
+
+  Node person_orig = get_node_by_name(graph_copy[person].name, graph);
+
+  // 1. remove computed edges
+  std::vector<std::tuple<Node, Node, EdgeProps>> computed_edges;
+  for (const auto& e : boost::make_iterator_range(edges(graph_copy)))
+  {
+    if (graph_copy[e].computed)
+    {
+      computed_edges.push_back(
+          std::make_tuple(source(e, graph_copy), target(e, graph_copy), graph_copy[e]));
+    }
+  }
+  for (auto e : computed_edges)
+  {
+    Node s, t;
+    EdgeProps ep;
+    std::tie(s, t, ep) = e;
+    remove_edge(s, t, graph_copy);
+  }
+  // 2. compute shortest paths
+
+  // vector for storing distance property
+  std::vector<float> d(num_vertices(graph_copy));
+
+  dijkstra_shortest_paths(
+      graph_copy, person,
+      boost::distance_map(&d[0]).weight_map(get(&EdgeProps::log_likelihood, graph_copy)));
+
+  // 3. create computed edges for features not directly connected to the person
+
+  std::vector<std::tuple<Node, Node, EdgeProps>> edges_to_update;
+
+  for (const auto& n : boost::make_iterator_range(vertices(graph_copy)))
+  {
+    if (n == person)
+    {
+      continue;
+    }
+
+    const auto& e = edge(n, person, graph_copy);
+
+    // if already connected, continue
+    if (e.second)
+    {
+      continue;
+    }
+
+    auto dist = d[n];
+
+    // no path
+    if (dist == std::numeric_limits<decltype(EdgeProps::log_likelihood)>::max())
+    {
+      continue;
+    }
+    float likelihood = inv_log_likelihood(dist);
+
+    if (likelihood < threshold)
+    {
+      continue;
+    }
+
+    auto out = add_edge(n, person, graph_copy);
+
+    if (out.second)
+    {
+      Edge new_e = out.first;
+
+      graph_copy[new_e].likelihood = likelihood;
+      graph_copy[new_e].weight = likelihood2weight(likelihood);
+      graph_copy[new_e].log_likelihood = dist;
+      graph_copy[new_e].computed = true;
+
+      edges_to_update.push_back({ n, person, graph_copy[new_e] });
+    }
+    else
+    {
+      std::cout << "[EE] failed to add computed edge between " << graph_copy[person].name
+           << " and " << graph_copy[n].name << ": edge already exist!" << std::endl;
+      assert(false);
+    }
+  }
+
+  // 4. bring back the previously removed edges, *if they have not been updated*
+  for (const auto& e : computed_edges)
+  {
+    auto ok = add_edge(get<0>(e), get<1>(e),
+                       graph_copy);  // parallel edges are not permitted -> add_edge will
+                                     // only insert the edge if not already present
+    // ok.second = true: the edge was added -> value not previously updated
+    // ok.second = false: the edge was already there: value updated!
+    if (ok.second)
+    {
+      graph_copy[ok.first] = get<2>(e);
+      edges_to_update.push_back(e);
+    }
+  }
+
+  // finally, perform the updates on the original graph (eg, not the copy)
+  for (const auto& e : edges_to_update)
+  {
+    Node s, t;
+    EdgeProps ep;
+    std::tie(s, t, ep) = e;
+
+    Node s_orig = get_node_by_name(graph_copy[s].name, graph);
+    Node t_orig = get_node_by_name(graph_copy[t].name, graph);
+
+    // this either create a new edge (out.second = true), or update the value
+    // of an existing edge (out.second = false).  important: adding/updating an
+    // edge to the subgraph also adds it to the parent graph
+    auto out = add_edge(s_orig, t_orig, graph);
+    graph[out.first] = ep;
+  }
+}
+
+float PersonMatcher::partition_affinity(const Subgraphs& partition) const
+{
+  float affinity = 0.;
+
+  for (const Subgraph& association : partition)
+  {
+    auto graph = clean_graph_copy(association.first);
+
+    // set the edge_weight property, as I've not been able to use the EdgeProps::weight
+    // property directly in kruskal_minimum_spanning_tree
+    for (const auto& e : boost::make_iterator_range(edges(graph)))
+    {
+      put(boost::edge_weight_t(), graph, e, graph[e].weight);
+    }
+
+    std::vector<Edge> spanning_tree;
+
+    kruskal_minimum_spanning_tree(graph, std::back_inserter(spanning_tree));
+    //, weight_map(get(&EdgeProps::weight, graph)));
+
+    for (const auto& e : spanning_tree)
+    {
+      affinity += graph[e].likelihood;
+    }
+  }
+
+  return affinity;
+}
+
+Graph PersonMatcher::clean_graph_copy(const Graph& graph, bool remove_anonymous) const
+{
+  Graph res;
+
+  for (const auto& n : boost::make_iterator_range(vertices(graph)))
+  {
+    if (graph[n].valid && !(remove_anonymous && graph[n].anonymous))
+    {
+      Node n_copy = add_vertex(res);
+      res[n_copy] = graph[n];
+    }
+  }
+
+  for (const auto& e : boost::make_iterator_range(edges(graph)))
+  {
+    Node s = get_node_by_name(graph[source(e, graph)].name, res);
+    Node t = get_node_by_name(graph[target(e, graph)].name, res);
+
+    if (s != INEXISTANT_VERTEX && t != INEXISTANT_VERTEX)
+    {
+      Edge e_copy = add_edge(s, t, res).first;
+      res[e_copy] = graph[e];
+    }
+  }
+
+  return res;
+}
+
+Subgraphs PersonMatcher::compute_associations()
+{
+  if (num_vertices(g) == 0)
+    return {};
+
+  clear_anonymous_persons();
+
+  // !! mutates this->g
+  g = clean_graph_copy(g);
+
+  // !! mutates this->g
+  prune_unlikely_connections();
+
+  Subgraphs complete_partition;
+
+  ////////// Get connected components
+  std::vector<int> component(num_vertices(g));  // component map
+
+
+
+  auto nb_components = boost::connected_components(active_graph, &component[0]);
+
+  // create one subgraph per connected component
+  std::vector<Graph> connected_components;
+
+  for (size_t i = 0; i < nb_components; i++)
+  {
+    auto subG = g.create_subgraph();
+    for (size_t j = 0; j < num_vertices(g); j++)
+    {
+      if (component[j] == i)
+      {
+        add_vertex(j, subG);
+      }
+    }
+    if (num_vertices(subG) > 0)
+    {  // size might be zero if the component only includes invalid (ie, removed) nodes
+      connected_components.push_back(subG);
+    }
+  }
+
+  for (auto subgraph : connected_components)
+  {
+    auto partitions = get_partitions(subgraph);
+
+    // look for the partitions with the least component
+    // -- the maximum possible number of partitions being the number of nodes
+    // in the graph
+    size_t min_len = num_vertices(g);
+
+    for (auto p : partitions)
+    {
+      if (p.size() < min_len)
+      {
+        min_len = p.size();
+      }
+    }
+
+    // only keep the most compact partitions (ie, partitions with the minimal number of subgraph)
+    std::vector<Subgraphs> compact_partitions;
+
+    std::copy_if(partitions.begin(), partitions.end(), std::back_inserter(compact_partitions),
+                 [min_len](const Subgraphs& elem) { return elem.size() == min_len; });
+
+    std::sort(compact_partitions.begin(), compact_partitions.end(),
+              [this](const Subgraphs& e1, const Subgraphs& e2) {
+                return partition_affinity(e1) > partition_affinity(e2);
+              });
+
+    complete_partition.insert(complete_partition.end(), compact_partitions[0].begin(),
+                              compact_partitions[0].end());
+  }
+
+  for (auto& subgraph : complete_partition)
+  {
+    add_anonymous_person(subgraph);
+    fully_connect_persons(subgraph);
+  }
+
+  // cout << "ASSOCIATIONS:" << endl;
+  // print_partition(complete_partition);
+  size_t idx = 0;
+
+  ///////
+  // assign their association id to each node -- only used to color the graphviz
+  // output!
+  for (const auto& association : complete_partition)
+  {
+    idx += 1;
+    auto subgraph = association.first;
+    for (const auto& n : boost::make_iterator_range(vertices(subgraph)))
+    {
+      subgraph[n].association_id = idx;
+    }
+  }
+  ///////
+
+  return complete_partition;
+}
+
+void PersonMatcher::print_partition(const Subgraphs& partition) const
+{
+  size_t idx = 0;
+
+  for (const auto& association : partition)
+  {
+    idx += 1;
+    auto subgraph = association.first;
+
+    std::cout << "  Association " << idx << std::endl;
+
+    std::cout << "    Nodes: [";
+    for (const auto& n : boost::make_iterator_range(vertices(subgraph)))
+    {
+      std::cout << subgraph[n].name << ", ";
+    }
+    std::cout << "]" << std::endl;
+
+    for (const auto& e : boost::make_iterator_range(edges(subgraph)))
+    {
+      std::cout << "    " << subgraph[source(e, subgraph)].name << " <-- " << subgraph[e].likelihood
+           << " --> " << subgraph[target(e, subgraph)].name << std::endl;
+    }
+
+    std::cout << std::endl;
+  }
+}
+
+void PersonMatcher::update(Relations relations, bool create_features_from_candidate_matches)
+{
+  hri::ID id1, id2;
+  hri::FeatureType type1, type2;
+  float likelihood;
 
   for (auto rel : relations)
   {
-    std::tie(id1, type1, id2, type2, p) = rel;
+    std::tie(id1, type1, id2, type2, likelihood) = rel;
+
+    Node v1 = get_node_by_name(id1, g);
+    Node v2 = get_node_by_name(id2, g);
+
+    if (likelihood <= 0.0)
+    {
+      if (v1 != INEXISTANT_VERTEX && v2 != INEXISTANT_VERTEX)
+      {
+        remove_edge(v1, v2, g);
+      }
+      continue;
+    }
+
+    if (!create_features_from_candidate_matches &&
+        (v1 == INEXISTANT_VERTEX || v2 == INEXISTANT_VERTEX))
+    {
+      std::cout << "Not updating relation as one of the feature does not exist and ~features_from_matches=false" << std::endl;
+      continue;
+    }
 
 
-    // cout << "==== " << id1 << " <-> " << id2 << " ====" << endl;
-    // cout << "p=" << p << " -> w=" << weight << endl;
-
-    Vertex v1 = get_vertex(g, id1);
-    Vertex v2 = get_vertex(g, id2);
+    // if needed, create the vertices
 
     if (v1 == INEXISTANT_VERTEX)
     {
       v1 = add_vertex(g);
       g[v1].name = id1;
-      id_types[type1].insert(id1);
+      g[v1].type = type1;
     }
+
+    // id1 == id2 -> we a simply creating a new feature; no edge to add
+    if (id1 == id2)
+    {
+      continue;
+    }
+
 
     if (v2 == INEXISTANT_VERTEX)
     {
       v2 = add_vertex(g);
       g[v2].name = id2;
-      id_types[type2].insert(id2);
+      g[v2].type = type2;
     }
 
-    if (p <= 0.0)
-    {
-      remove_edge(v1, v2, g);
-      continue;
-    }
-
-    Edge edge;
+    Edge e;
     bool ok;
 
+    std::tie(e, ok) = add_edge(v1, v2, g);
+    // (note: e points either to a new edge, or to the existing edge if already present)
 
-    float weight = log(1. / p);
-
-    std::tie(edge, ok) = add_edge(v1, v2, weight, g);
-
-    if (!ok)
-    {
-      boost::put(boost::edge_weight_t(), g, edge, weight);
-    }
+    g[e].likelihood = likelihood;
+    g[e].weight = likelihood2weight(likelihood);
+    g[e].log_likelihood = log_likelihood(likelihood);
+    g[e].computed = false;
   }
 }
 
-std::set<ID> PersonMatcher::erase(ID id)
+void PersonMatcher::erase(hri::ID id)
 {
-  set<ID> removed_persons;
-
-  Vertex v = get_vertex(g, id);
+  Node v = get_node_by_name(id, g);
   if (v == INEXISTANT_VERTEX)
   {
-    return removed_persons;
+    std::cout << "Unknown ID " << id << "! can not remove it" << std::endl;
+    return;
   }
 
+  if (anonymous_ids_map.count(id))
+  {
+    auto nb = anonymous_ids_map.erase(id);
+    if (nb != 1)
+    {
+      std::cout << "Removed " << nb << " elements for ID " << id << " instead of exactly 1" << std::endl;
+    }
+  }
   clear_vertex(v, g);
-  remove_vertex(v, g);
-
-  erase_id(id);
-
-  if (id_types[person].count(id))
-  {
-    removed_persons.insert(id);
-  }
-
-  auto orphaned_persons = clear_orphans();
-
-  removed_persons.insert(orphaned_persons.begin(), orphaned_persons.end());
-
-  return removed_persons;
-}
-
-std::set<ID> PersonMatcher::clear_orphans()
-{
-  // remove all orphan vertices and return removed persons
-  set<ID> removed_persons;
-
-  Graph::vertex_iterator v, vend;
-
-  while (true)
-  {
-    bool found_orphan = false;
-    for (boost::tie(v, vend) = vertices(g); v != vend; ++v)
-    {
-      if (out_degree(*v, g) == 0)
-      {
-        found_orphan = true;
-
-        ID id = get(&VertexProps::name, g, *v);
-        RCLCPP_INFO_STREAM_ONCE(rclcpp::get_logger("person_matcher")," ---> clearing orphan " << id);
-
-        // is it a person node? if so, store it
-        if (id_types[person].count(id))
-        {
-          removed_persons.insert(id);
-        }
-
-        erase_id(id);
-
-        remove_vertex(*v, g);
-
-
-        // we break and restart the iteration over all the vertices of the graph
-        // because when a vertex is removed, the graph reindex all vertices -- if we were
-        // to first build a list of all vertices to delete, that list would be invalid
-        // after the first removed vertex.
-        break;
-      }
-    }
-
-    // continue until no more orphans
-    if (!found_orphan)
-    {
-      break;
-    }
-  }
-
-  return removed_persons;
+  g[v].valid = false;
 }
 
 void PersonMatcher::reset()
 {
-  g.clear();
+  g = Graph();
+  anonymous_ids_map.clear();
+  incremental_anon_id = 1;
 }
 
-map<FeatureType, ID> PersonMatcher::get_association(ID id) const
+
+std::map<hri::ID, std::map<hri::FeatureType, hri::ID>> PersonMatcher::get_all_associations()
 {
-  auto vertex = get_vertex(g, id);
-  if (vertex == INEXISTANT_VERTEX)
+  // TODO: we must ensure that g is *not mutated* until the end of the method.
+  // Might be safer to make a copy of g at the start, and run
+  // compute_associations on that copy.
+  // However this should be fine, as none of the callback based methods directly mutate
+  // the graph (all mutations take place from 'publish_persons')
+
+  auto associations = compute_associations();
+
+  std::map<hri::ID, std::map<hri::FeatureType, hri::ID>> res;
+
+  for (const auto& association : associations)
   {
-    throw runtime_error("requesting associations for inexistant ID");
-  }
+    Node person;
 
-  // vector for storing distance property
-  vector<float> d(num_vertices(g));
+    std::map<hri::FeatureType, hri::ID> features;
+    auto graph = association.first;
 
-  dijkstra_shortest_paths(g, vertex, distance_map(&d[0]));
-
-  map<FeatureType, ID> res;
-
-  map<FeatureType, std::pair<ID, float>> best_candidates{
-    { face, { "", numeric_limits<float>::max() } },
-    { body, { "", numeric_limits<float>::max() } },
-    { voice, { "", numeric_limits<float>::max() } }
-  };
-
-  for (auto vp : make_iterator_range(vertices(g)))
-  {
-    for (auto type : { face, body, voice })
+    for (const auto& n : boost::make_iterator_range(vertices(graph)))
     {
-      for (const auto& _id : id_types.at(type))
+      if (graph[n].type == hri::FeatureType::person)
       {
-        if (get_vertex(g, _id) == vp)
-        {
-          if (d[vp] < best_candidates[type].second)
-          {
-            // cout << "best candidate: " << kv.first << " " << d[vp] << endl;
-            best_candidates[type] = { _id, d[vp] };
-            goto next_vertex;
-          }
-          else
-            goto next_vertex;
-        }
+        person = n;
+      }
+      else
+      {
+        features[graph[n].type] = graph[n].name;
       }
     }
-  next_vertex:;
-  }
-
-  if (best_candidates[face].second < threshold)
-  {
-    res[face] = best_candidates[face].first;
-  }
-  if (best_candidates[body].second < threshold)
-  {
-    res[body] = best_candidates[body].first;
-  }
-  if (best_candidates[voice].second < threshold)
-  {
-    res[voice] = best_candidates[voice].first;
+    res[graph[person].name] = features;
   }
 
   return res;
 }
 
-
-map<ID, map<FeatureType, ID>> PersonMatcher::get_all_associations() const
+std::string PersonMatcher::get_graphviz() const
 {
-  map<ID, map<FeatureType, ID>> res;
-
-  for (const auto& id : id_types.at(person))
-  {
-    res[id] = get_association(id);
-  }
-
-  return res;
-}
-
-string PersonMatcher::get_graphviz() const
-{
-  stringstream ss;
-  write_graphviz(ss, g, node_label_writer(g, id_types), weight_label_writer(g));
+  std::stringstream ss;
+  write_graphviz(ss, g, node_label_writer(g), weight_label_writer(g));
 
   return ss.str();
-}
-
-/** warning: if the same ID is used for 2 different features (eg a face and a
- * body), both will be deleted!
- */
-void PersonMatcher::erase_id(ID id)
-{
-  for (auto type : { face, body, voice, person })
-  {
-    if (id_types[type].count(id))
-    {
-      id_types[type].erase(id);
-    }
-  }
 }
 

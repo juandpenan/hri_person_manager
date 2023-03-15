@@ -47,11 +47,11 @@ using namespace ros;
 // waiting time for the libhri callback to process their inputs
 #define WAIT(X) std::this_thread::sleep_for(std::chrono::milliseconds(X))
 
-#define DEBUG_WAIT(X)                                                                    \
-  {                                                                                      \
-    ROS_WARN("waiting...");                                                              \
-    std::this_thread::sleep_for(std::chrono::milliseconds(X));                           \
-    ROS_WARN("done waiting");                                                            \
+#define DEBUG_WAIT(X) \
+  { \
+    ROS_WARN("waiting..."); \
+    std::this_thread::sleep_for(std::chrono::milliseconds(X)); \
+    ROS_WARN("done waiting"); \
   }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -62,59 +62,59 @@ TEST(hri_person_matcher, BasicAssociationModel)
 {
   auto model = PersonMatcher(0.4);
 
-  EXPECT_ANY_THROW({ model.get_association("p1"); });
+  EXPECT_ANY_THROW({model.get_association("p1");});
 
-  Relations data = { { "p1", person, "f1", face, 1.0 } };
+  Relations data = {{"p1", person, "f1", face, 1.0}};
   model.update(data);
   auto association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}}));
   EXPECT_TRUE(association.find(hri::voice) == association.end());
   EXPECT_TRUE(association.find(hri::body) == association.end());
 
-  model.update({ { "p1", person, "f1", face, 0.9 } });
+  model.update({{"p1", person, "f1", face, 0.9}});
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}}));
   EXPECT_TRUE(association.find(hri::voice) == association.end());
   EXPECT_TRUE(association.find(hri::body) == association.end());
 
-  model.update({ { "p1", person, "f1", face, 0.4 } });
+  model.update({{"p1", person, "f1", face, 0.4}});
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}}));
   EXPECT_TRUE(association.find(hri::voice) == association.end());
   EXPECT_TRUE(association.find(hri::body) == association.end());
 
-  model.update({ { "p1", person, "f1", face, 0.35 } });
+  model.update({{"p1", person, "f1", face, 0.35}});
   association = model.get_association("p1");
   EXPECT_TRUE(association.empty());
 
-  model.update({ { "p1", person, "f1", face, 0.1 } });
+  model.update({{"p1", person, "f1", face, 0.1}});
   association = model.get_association("p1");
   EXPECT_TRUE(association.empty());
 
-  model.update({ { "p1", person, "f1", face, 0.0 } });
+  model.update({{"p1", person, "f1", face, 0.0}});
   association = model.get_association("p1");
   EXPECT_TRUE(association.empty());
 
-  model.update({ { "p1", person, "f1", face, 0.9 } });
+  model.update({{"p1", person, "f1", face, 0.9}});
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}}));
   EXPECT_TRUE(association.find(hri::voice) == association.end());
   EXPECT_TRUE(association.find(hri::body) == association.end());
 
 
   model = PersonMatcher(0.05);
 
-  model.update({ { "p1", person, "f1", face, 0.1 } });
+  model.update({{"p1", person, "f1", face, 0.1}});
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}}));
   EXPECT_TRUE(association.find(hri::voice) == association.end());
   EXPECT_TRUE(association.find(hri::body) == association.end());
 
-  model.update({ { "p1", person, "f1", face, 0.01 } });
+  model.update({{"p1", person, "f1", face, 0.01}});
   association = model.get_association("p1");
   EXPECT_TRUE(association.empty());
 
-  model.update({ { "p1", person, "f1", face, 0.0 } });
+  model.update({{"p1", person, "f1", face, 0.0}});
   association = model.get_association("p1");
   EXPECT_TRUE(association.empty());
 }
@@ -130,28 +130,28 @@ TEST(hri_person_matcher, AssociationNetwork)
 
 
   // Test small transitive network, with p1 -> {f1, b1} more likely than p1 -> {f1, b2}
-  Relations data = { { "f1", face, "b1", body, 0.7 },
-                     { "f1", face, "b2", body, 0.6 },
-                     { "p1", person, "f1", face, 0.9 } };
+  Relations data = {{"f1", face, "b1", body, 0.7},
+    {"f1", face, "b2", body, 0.6},
+    {"p1", person, "f1", face, 0.9}};
   model.update(data);
   auto association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" }, { hri::body, "b1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}, {hri::body, "b1"}}));
   EXPECT_TRUE(association.find(hri::voice) == association.end());
 
   // Test *updating* an edge. The previous value should be replaced
-  data = { { "f1", face, "b1", body, 0.0 } };
+  data = {{"f1", face, "b1", body, 0.0}};
   model.update(data);
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" }, { hri::body, "b2" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}, {hri::body, "b2"}}));
   EXPECT_TRUE(association.find(hri::voice) == association.end());
 
 
   // this time, the likelihood of p1 being associated to b2 is < threshold (0.9
   // * 0.4 < 0.4) => no association should be returned.
-  data = { { "f1", face, "b2", body, 0.4 } };
+  data = {{"f1", face, "b2", body, 0.4}};
   model.update(data);
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}}));
   EXPECT_TRUE(association.find(hri::body) == association.end());
   EXPECT_TRUE(association.find(hri::voice) == association.end());
 }
@@ -164,47 +164,47 @@ TEST(hri_person_matcher, ResetEraseIds)
 {
   auto model = PersonMatcher(0.4);
 
-  Relations data = { { "p1", person, "f1", face, 0.9 } };
+  Relations data = {{"p1", person, "f1", face, 0.9}};
   model.update(data);
   auto association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}}));
 
   model.erase("f1");
   association = model.get_association("p1");
   EXPECT_TRUE(association.empty());
 
   model.erase("p1");
-  EXPECT_ANY_THROW({ model.get_association("p1"); });
+  EXPECT_ANY_THROW({model.get_association("p1");});
 
-  data = { { "p1", person, "f1", face, 0.9 },
-           { "f1", face, "b2", body, 0.6 },
-           { "b1", body, "f1", face, 0.7 } };
+  data = {{"p1", person, "f1", face, 0.9},
+    {"f1", face, "b2", body, 0.6},
+    {"b1", body, "f1", face, 0.7}};
 
   model.update(data);
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" }, { hri::body, "b1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}, {hri::body, "b1"}}));
 
   model.erase("b1");
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" }, { hri::body, "b2" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}, {hri::body, "b2"}}));
 
-  model.update({ { "f1", face, "b1", body, 0.7 } });
+  model.update({{"f1", face, "b1", body, 0.7}});
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" }, { hri::body, "b1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}, {hri::body, "b1"}}));
 
   model.reset();
-  EXPECT_ANY_THROW({ model.get_association("p1"); });
+  EXPECT_ANY_THROW({model.get_association("p1");});
 
   model.update(data);
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" }, { hri::body, "b1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}, {hri::body, "b1"}}));
 
   model.reset();
-  EXPECT_ANY_THROW({ model.get_association("p1"); });
+  EXPECT_ANY_THROW({model.get_association("p1");});
 
   model.update(data);
   association = model.get_association("p1");
-  EXPECT_EQ(association, (map<FeatureType, ID>{ { hri::face, "f1" }, { hri::body, "b1" } }));
+  EXPECT_EQ(association, (map<FeatureType, ID>{{hri::face, "f1"}, {hri::body, "b1"}}));
 }
 
 
@@ -228,7 +228,7 @@ TEST(hri_person_manager, ROSNode)
   WAIT(500);
 
   ASSERT_EQ(pub.getNumSubscribers(), 1)
-      << "hri_person_manager should be the one and only node subscribed to this topic";
+    << "hri_person_manager should be the one and only node subscribed to this topic";
 
   ASSERT_EQ(hri_listener.getPersons().size(), 0);
 
@@ -252,7 +252,7 @@ TEST(hri_person_manager, ROSNode)
 
   auto p1 = persons["p1"].lock();
   ASSERT_FALSE(p1->face().lock())
-      << "the face has not yet been published -> can not be associated to the person yet.";
+    << "the face has not yet been published -> can not be associated to the person yet.";
 
   ASSERT_FALSE(p1->body().lock());
   ASSERT_FALSE(p1->voice().lock());
@@ -261,20 +261,20 @@ TEST(hri_person_manager, ROSNode)
   // publish the face
   auto face_pub = nh.advertise<hri_msgs::IdsList>("/humans/faces/tracked", 1);
   auto ids = hri_msgs::IdsList();
-  ids.ids = { "f1" };
+  ids.ids = {"f1"};
   face_pub.publish(ids);
 
   // wait for lihri to pick up the new face
   WAIT(250);
 
   ASSERT_TRUE(p1->face().lock())
-      << "the face has been published -> should now be associated to the person.";
+    << "the face has been published -> should now be associated to the person.";
 
 
   ASSERT_FALSE(p1->face().expired());
   ASSERT_EQ(p1->face().lock()->id(), "f1");
 
-  ids.ids = { "f1", "f2" };
+  ids.ids = {"f1", "f2"};
   face_pub.publish(ids);
 
   WAIT(200);
@@ -330,7 +330,7 @@ TEST(hri_person_manager, ROSReset)
   // publish a face
   auto face_pub = nh.advertise<hri_msgs::IdsList>("/humans/faces/tracked", 1);
   auto ids = hri_msgs::IdsList();
-  ids.ids = { "f1" };
+  ids.ids = {"f1"};
   face_pub.publish(ids);
 
 
@@ -395,7 +395,6 @@ TEST(hri_person_manager, ROSReset)
   ASSERT_EQ(hri_listener.getPersons().size(), 0);
 
 
-
   spinner.stop();
 }
 
@@ -433,7 +432,7 @@ TEST(hri_person_manager, AnonymousPersons)
 
   // publish a face
   auto ids = hri_msgs::IdsList();
-  ids.ids = { "f1" };
+  ids.ids = {"f1"};
   faces_pub.publish(ids);
 
   WAIT(400);
@@ -443,7 +442,7 @@ TEST(hri_person_manager, AnonymousPersons)
 
   auto anon_id = hri::ANONYMOUS + "f1";
   ASSERT_TRUE(persons.find(anon_id) != persons.end())
-      << "the anonymous person 'anonymous_person_f1' should be published";
+    << "the anonymous person 'anonymous_person_f1' should be published";
 
   ASSERT_TRUE(persons[anon_id].lock());
   auto f1 = persons[anon_id].lock();
@@ -460,12 +459,14 @@ TEST(hri_person_manager, AnonymousPersons)
   WAIT(400);
 
   persons = hri_listener.getPersons();
-  ASSERT_EQ(persons.size(), 0) << "the anonymous person should have disappeared since its face is not detected anymore";
+  ASSERT_EQ(
+    persons.size(),
+    0) << "the anonymous person should have disappeared since its face is not detected anymore";
 
   ////////////////////////////////////////////////////////////////////////////////////////////////////
 
   ids = hri_msgs::IdsList();
-  ids.ids = { "f1" };
+  ids.ids = {"f1"};
   faces_pub.publish(ids);
 
   WAIT(400);
@@ -484,11 +485,15 @@ TEST(hri_person_manager, AnonymousPersons)
   WAIT(400);
 
   persons = hri_listener.getPersons();
-  ASSERT_EQ(persons.size(), 1) << "the anonymous 'f1' person should have disappeared, since face 'f1' is now associated to a person";
+  ASSERT_EQ(
+    persons.size(),
+    1) <<
+    "the anonymous 'f1' person should have disappeared, since face 'f1' is now associated to a person";
 
   ASSERT_TRUE(persons.find("p1") != persons.end());
   ASSERT_TRUE(persons.find(anon_id) == persons.end())
-      << "the anonymous 'f1' person should have disappeared, since face 'f1' is now associated to a person";
+    <<
+    "the anonymous 'f1' person should have disappeared, since face 'f1' is now associated to a person";
 
   ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -503,20 +508,20 @@ TEST(hri_person_manager, AnonymousPersons)
   WAIT(400);
 
   ASSERT_EQ(hri_listener.getPersons().size(), 1)
-      << "face 'f1' is not associated to an actual person; it should re-create an anonymous person";
+    << "face 'f1' is not associated to an actual person; it should re-create an anonymous person";
 
 
-  ids.ids = { "f1", "f2" };
+  ids.ids = {"f1", "f2"};
   faces_pub.publish(ids);
   WAIT(400);
   ASSERT_EQ(hri_listener.getPersons().size(), 2)
-      << "2 anonymous persons are expected, one for each face f1 and f2";
+    << "2 anonymous persons are expected, one for each face f1 and f2";
 
-  ids.ids = { "b1" };
+  ids.ids = {"b1"};
   bodies_pub.publish(ids);
   WAIT(400);
   ASSERT_EQ(hri_listener.getPersons().size(), 3)
-      << "a 3rd anonymous person should have been created for body b1";
+    << "a 3rd anonymous person should have been created for body b1";
 
   match.id1 = "f2";
   match.id1_type = hri_msgs::IdsMatch::FACE;
@@ -530,13 +535,15 @@ TEST(hri_person_manager, AnonymousPersons)
 
   persons = hri_listener.getPersons();
 
-  ASSERT_EQ(persons.size(), 2) << "f2 and b1 are now associated: one of the 2 anonymous persons should have disappeared";
+  ASSERT_EQ(
+    persons.size(),
+    2) << "f2 and b1 are now associated: one of the 2 anonymous persons should have disappeared";
 
-  ids.ids = { "f2" };
+  ids.ids = {"f2"};
   faces_pub.publish(ids);
   WAIT(400);
   ASSERT_EQ(hri_listener.getPersons().size(), 1)
-      << "only one anonymous person, associated to f2 and b1 should remain";
+    << "only one anonymous person, associated to f2 and b1 should remain";
 
   ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -550,7 +557,9 @@ TEST(hri_person_manager, AnonymousPersons)
 
   WAIT(400);
   persons = hri_listener.getPersons();
-  ASSERT_EQ(persons.size(), 1) << "only one non-anonymous person p2, associated to f2 and b1 should remain";
+  ASSERT_EQ(
+    persons.size(),
+    1) << "only one non-anonymous person p2, associated to f2 and b1 should remain";
 
   ASSERT_TRUE(persons.find("p1") == persons.end());
   ASSERT_TRUE(persons.find("p2") != persons.end());
@@ -586,7 +595,7 @@ TEST(hri_person_manager, AnonymousPersons2)
 
   // publish (latched) faces before the hri_person_manager is fully started
   auto ids = hri_msgs::IdsList();
-  ids.ids = { "f1", "f2" };
+  ids.ids = {"f1", "f2"};
   faces_pub.publish(ids);
 
   WAIT(400);
@@ -595,7 +604,7 @@ TEST(hri_person_manager, AnonymousPersons2)
   ASSERT_EQ(persons.size(), 2);
 
   ids = hri_msgs::IdsList();
-  ids.ids = { "f1" };
+  ids.ids = {"f1"};
   faces_pub.publish(ids);
 
   WAIT(400);
@@ -632,7 +641,7 @@ TEST(hri_person_manager, AnonymousPersons3)
 
 
   auto ids = hri_msgs::IdsList();
-  ids.ids = { "f1" };
+  ids.ids = {"f1"};
   faces_pub.publish(ids);
 
   WAIT(400);
@@ -643,7 +652,7 @@ TEST(hri_person_manager, AnonymousPersons3)
   auto anon_id = hri::ANONYMOUS + "f1";
   ASSERT_TRUE(persons.find(anon_id) != persons.end());
 
-  ids.ids = { "b1" };
+  ids.ids = {"b1"};
   bodies_pub.publish(ids);
 
   WAIT(400);
@@ -657,7 +666,7 @@ TEST(hri_person_manager, AnonymousPersons3)
   ASSERT_TRUE(persons.find(anon_id) != persons.end());
 
 
-  ids.ids = { "f2" };
+  ids.ids = {"f2"};
   faces_pub.publish(ids);
 
   WAIT(400);
@@ -713,7 +722,7 @@ TEST(hri_person_manager, AnonymousPersonsAdvanced)
   reset_srv.call(empty);
 
   auto ids = hri_msgs::IdsList();
-  ids.ids = { "f1" };
+  ids.ids = {"f1"};
   faces_pub.publish(ids);
 
   WAIT(200);
@@ -728,7 +737,7 @@ TEST(hri_person_manager, AnonymousPersonsAdvanced)
   ASSERT_EQ(persons.size(), 1);
   ASSERT_TRUE(persons.find(anon_id) != persons.end());
 
-  ids.ids = { "b1" };
+  ids.ids = {"b1"};
   bodies_pub.publish(ids);
 
   WAIT(200);
@@ -756,7 +765,6 @@ TEST(hri_person_manager, AnonymousPersonsAdvanced)
   persons = hri_listener.getPersons();
 
 
-
   ASSERT_TRUE(persons[anon_id].lock());
   auto f1 = persons[anon_id].lock();
   ASSERT_TRUE(f1);
@@ -772,10 +780,12 @@ TEST(hri_person_manager, AnonymousPersonsAdvanced)
   WAIT(400);
 
   persons = hri_listener.getPersons();
-  ASSERT_EQ(persons.size(), 0) << "the anonymous person should have disappeared since its face is not detected anymore";
+  ASSERT_EQ(
+    persons.size(),
+    0) << "the anonymous person should have disappeared since its face is not detected anymore";
 
   ids = hri_msgs::IdsList();
-  ids.ids = { "f1" };
+  ids.ids = {"f1"};
   faces_pub.publish(ids);
 
   WAIT(400);
@@ -793,24 +803,28 @@ TEST(hri_person_manager, AnonymousPersonsAdvanced)
   WAIT(400);
 
   persons = hri_listener.getPersons();
-  ASSERT_EQ(persons.size(), 1) << "the anonymous 'f1' person should have disappeared, since face 'f1' is now associated to a person";
+  ASSERT_EQ(
+    persons.size(),
+    1) <<
+    "the anonymous 'f1' person should have disappeared, since face 'f1' is now associated to a person";
 
   ASSERT_TRUE(persons.find("p1") != persons.end());
   ASSERT_TRUE(persons.find(anon_id) == persons.end())
-      << "the anonymous 'f1' person should have disappeared, since face 'f1' is now associated to a person";
+    <<
+    "the anonymous 'f1' person should have disappeared, since face 'f1' is now associated to a person";
 
 
-  ids.ids = { "f1" };
+  ids.ids = {"f1"};
   faces_pub.publish(ids);
   WAIT(400);
   ASSERT_EQ(hri_listener.getPersons().size(), 1);
 
-  ids.ids = { "f1", "f2" };
+  ids.ids = {"f1", "f2"};
   faces_pub.publish(ids);
   WAIT(400);
   ASSERT_EQ(hri_listener.getPersons().size(), 2);
 
-  ids.ids = { "b1" };
+  ids.ids = {"b1"};
   bodies_pub.publish(ids);
   WAIT(400);
   ASSERT_EQ(hri_listener.getPersons().size(), 3);
@@ -833,7 +847,7 @@ TEST(hri_person_manager, AnonymousPersonsAdvanced)
   ASSERT_TRUE(persons.find("p2") != persons.end());
 
 
-  ids.ids = { "f2" };
+  ids.ids = {"f2"};
   faces_pub.publish(ids);
   WAIT(400);
   ASSERT_EQ(hri_listener.getPersons().size(), 1);
@@ -849,7 +863,7 @@ TEST(hri_person_manager, AnonymousPersonsAdvanced)
   spinner.stop();
 }
 
-int main(int argc, char** argv)
+int main(int argc, char ** argv)
 {
   testing::InitGoogleTest(&argc, argv);
   ros::Time::init();  // needed for ros::Time::now()
@@ -858,4 +872,3 @@ int main(int argc, char** argv)
   ROS_INFO("Starting HRI person manager tests");
   return RUN_ALL_TESTS();
 }
-

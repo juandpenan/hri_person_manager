@@ -11,15 +11,17 @@ find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(hri_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(backward_ros REQUIRED)
 
 
 set(dependencies
     rclcpp
     hri  
-    tf2  
+    tf2
     tf2_ros
-    hri_msgs    
-    std_srvs    
+    hri_msgs
+    std_srvs
+    backward_ros   
   )
 
 include_directories(include)
@@ -55,6 +57,7 @@ install(
   DESTINATION include
 )
 
+add_compile_options(-g)
 
 # install(DIRECTORY launch DESTINATION share/${PROJECT_NAME})
 

@@ -1,5 +1,5 @@
-#ifndef MANAGED_PERSON_H
-#define MANAGED_PERSON_H
+#ifndef MANAGED_PERSON_HPP
+#define MANAGED_PERSON_HPP
 
 #include <iostream>
 #include <chrono>
@@ -8,7 +8,7 @@
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include "rclcpp/rclcpp.hpp"
 #include <tf2_ros/buffer.h>
-#include "tf2_ros/static_transform_broadcaster.h"
+#include "tf2_ros/transform_broadcaster.h"
 #include <hri/FeatureTracker.hpp>
 
 #include <std_msgs/msg/string.hpp>
@@ -27,12 +27,12 @@ const std::chrono::seconds LIFETIME_UNTRACKED_PERSON(10);
 const std::string PERSON("person_");
 const std::string ANONYMOUS("anonymous_person_");
 
-class ManagedPerson : public rclcpp::Node
+class ManagedPerson
 {
 public:
-
-  ManagedPerson(hri::ID id, tf2::BufferCore& tf_buffer,
-                const std::string& reference_frame);
+  ManagedPerson(
+    hri::ID id, rclcpp::Node::SharedPtr node ,tf2::BufferCore & tf_buffer,
+    const std::string & reference_frame);
 
   ~ManagedPerson();
 
@@ -74,32 +74,36 @@ public:
     return _actively_tracked;
   }
 
-  void update(hri::ID face_id, hri::ID body_id, hri::ID voice_id,
-              std::chrono::milliseconds elapsed_time);
+  void update(
+    hri::ID face_id, hri::ID body_id, hri::ID voice_id,
+    std::chrono::milliseconds elapsed_time);
 
 private:
   void publishFrame();
 
- 
+
+
   hri::ID _id;
 
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr face_id_pub;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr body_id_pub;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr voice_id_pub;
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr alias_pub; 
-  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr anonymous_pub; 
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr alias_pub;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr anonymous_pub;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr loc_confidence_pub;
 
+  rclcpp::Node::SharedPtr _node {nullptr};
+  rclcpp::CallbackGroup::SharedPtr callback_group_{nullptr};
 
   bool _actively_tracked;
 
   std::string _tf_frame;
   std::string _tf_reference_frame;
 
-  tf2::BufferCore* _tf_buffer;
+  tf2::BufferCore * _tf_buffer;
 
-  std::shared_ptr<tf2_ros::StaticTransformBroadcaster> _tf_br;
-  
+  std::unique_ptr<tf2_ros::TransformBroadcaster>  _tf_br;
+
 
   geometry_msgs::msg::TransformStamped _transform;
   bool _had_transform_at_least_once;

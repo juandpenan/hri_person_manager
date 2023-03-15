@@ -26,6 +26,7 @@
   <depend>hri_msgs</depend>
   <depend>std_srvs</depend>
   <depend>rclcpp</depend>
+  <depend>backward_ros</depend>
 
 
   <!-- The export tag contains other, unspecified, tags -->
